@@ -1,0 +1,163 @@
+import { NextResponse } from 'next/server'
+
+import { getDb, rowToAccount } from '@/lib/db'
+import { computeAccountScore } from '@/lib/accountScore'
+import { Account } from '@/types/account'
+
+export const runtime = 'nodejs'
+
+type AccountResponse = Omit<
+  Account,
+  'createdAt' | 'updatedAt' | 'aiSummaryUpdatedAt' | 'signals' | 'signalsUpdatedAt'
+> & {
+  createdAt: string
+  updatedAt: string
+  aiSummaryUpdatedAt?: string
+  signals?: Array<{
+    type: NonNullable<Account['signals']>[number]['type']
+    title: string
+    detail: string
+    severity: NonNullable<Account['signals']>[number]['severity']
+    detectedAt: string
+  }>
+  signalsUpdatedAt?: string
+}
+
+const toResponse = (a: Account): AccountResponse => ({
+  ...a,
+  accountScore: computeAccountScore(a),
+  createdAt: a.createdAt.toISOString(),
+  updatedAt: a.updatedAt.toISOString(),
+  aiSummaryUpdatedAt: a.aiSummaryUpdatedAt ? a.aiSummaryUpdatedAt.toISOString() : undefined,
+  signals: a.signals
+    ? a.signals.map((s) => ({
+        ...s,
+        detectedAt: s.detectedAt.toISOString(),
+      }))
+    : undefined,
+  signalsUpdatedAt: a.signalsUpdatedAt ? a.signalsUpdatedAt.toISOString() : undefined,
+})
+
+type UpdateAccountRequest = Partial<{
+  name: string
+  email: string
+  phone: string
+  company: string
+  industry: string
+  location: string
+  website: string
+  description: string
+  foundedYear: number
+  employeeCount: number
+  revenue: number
+  socialMedia: Account['socialMedia']
+  tags: string[]
+  researchNotes: string
+  status: Account['status']
+  value: Account['value']
+}>
+
+export async function GET(
+  _request: Request,
+  { params }: { params: { id: string } }
+) {
+  const db = getDb()
+  const row = db.prepare('SELECT * FROM accounts WHERE id = ?').get(params.id) as
+    | Parameters<typeof rowToAccount>[0]
+    | undefined
+
+  if (!row) {
+    return NextResponse.json({ error: 'Not found' }, { status: 404 })
+  }
+
+  const account = rowToAccount(row)
+  return NextResponse.json({ account: toResponse(account) })
+}
+
+export async function PUT(
+  request: Request,
+  { params }: { params: { id: string } }
+) {
+  const db = getDb()
+
+  const row = db.prepare('SELECT * FROM accounts WHERE id = ?').get(params.id) as
+    | Parameters<typeof rowToAccount>[0]
+    | undefined
+
+  if (!row) {
+    return NextResponse.json({ error: 'Not found' }, { status: 404 })
+  }
+
+  const existing = rowToAccount(row)
+  const body = (await request.json()) as UpdateAccountRequest
+
+  const next: Account = {
+    ...existing,
+    name: body.name !== undefined ? body.name.trim() : existing.name,
+    email: body.email !== undefined ? (body.email.trim() || undefined) : existing.email,
+    phone: body.phone !== undefined ? (body.phone.trim() || undefined) : existing.phone,
+    company: body.company !== undefined ? (body.company.trim() || undefined) : existing.company,
+    industry: body.industry !== undefined ? (body.industry.trim() || undefined) : existing.industry,
+    location: body.location !== undefined ? (body.location.trim() || undefined) : existing.location,
+    website: body.website !== undefined ? (body.website.trim() || undefined) : existing.website,
+    description: body.description !== undefined ? (body.description.trim() || undefined) : existing.description,
+    foundedYear: body.foundedYear !== undefined ? body.foundedYear : existing.foundedYear,
+    employeeCount: body.employeeCount !== undefined ? body.employeeCount : existing.employeeCount,
+    revenue: body.revenue !== undefined ? body.revenue : existing.revenue,
+    socialMedia: body.socialMedia !== undefined ? body.socialMedia : existing.socialMedia,
+    tags: body.tags !== undefined ? body.tags : existing.tags,
+    researchNotes: body.researchNotes !== undefined ? (body.researchNotes.trim() || undefined) : existing.researchNotes,
+    status: body.status !== undefined ? body.status : existing.status,
+    value: body.value !== undefined ? body.value : existing.value,
+    updatedAt: new Date(),
+  }
+
+  if (!next.name || next.name.trim().length === 0) {
+    return NextResponse.json({ error: 'Account name is required.' }, { status: 400 })
+  }
+
+  db.prepare(
+    `
+      UPDATE accounts SET
+        name=@name,
+        email=@email,
+        phone=@phone,
+        company=@company,
+        industry=@industry,
+        location=@location,
+        website=@website,
+        description=@description,
+        foundedYear=@foundedYear,
+        employeeCount=@employeeCount,
+        revenue=@revenue,
+        socialMedia=@socialMedia,
+        tags=@tags,
+        researchNotes=@researchNotes,
+        status=@status,
+        value=@value,
+        updatedAt=@updatedAt
+      WHERE id=@id
+    `
+  ).run({
+    id: next.id,
+    name: next.name,
+    email: next.email ?? null,
+    phone: next.phone ?? null,
+    company: next.company ?? null,
+    industry: next.industry ?? null,
+    location: next.location ?? null,
+    website: next.website ?? null,
+    description: next.description ?? null,
+    foundedYear: next.foundedYear ?? null,
+    employeeCount: next.employeeCount ?? null,
+    revenue: next.revenue ?? null,
+    socialMedia: next.socialMedia ? JSON.stringify(next.socialMedia) : null,
+    tags: JSON.stringify(next.tags ?? []),
+    researchNotes: next.researchNotes ?? null,
+    status: next.status,
+    value: next.value,
+    updatedAt: next.updatedAt.toISOString(),
+  })
+
+  return NextResponse.json({ account: toResponse(next) })
+}
