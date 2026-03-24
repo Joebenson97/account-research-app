@@ -2,7 +2,8 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
-import { Search, Plus, Filter, Download, Building2, Users, TrendingUp, Calendar } from 'lucide-react'
+import { useRouter } from 'next/navigation'
+import { Search, Plus, Filter, Download, Building2, Users, TrendingUp, Calendar, LogOut } from 'lucide-react'
 import { Account, SearchFilters } from '@/types/account'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -22,6 +23,7 @@ type AccountApi = Omit<Account, 'createdAt' | 'updatedAt'> & {
 }
 
 export default function HomePage() {
+  const router = useRouter()
   const [accounts, setAccounts] = useState<Account[]>([])
   const [searchFilters, setSearchFilters] = useState<SearchFilters>({})
   const [isCreateOpen, setIsCreateOpen] = useState(false)
@@ -201,6 +203,18 @@ export default function HomePage() {
               <Button variant="outline" size="sm">
                 <Download className="h-4 w-4 mr-2" />
                 Export
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={async () => {
+                  await fetch('/api/auth/logout', { method: 'POST' })
+                  router.push('/login')
+                  router.refresh()
+                }}
+              >
+                <LogOut className="h-4 w-4 mr-2" />
+                Sign Out
               </Button>
               <Button
                 size="sm"

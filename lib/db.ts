@@ -85,6 +85,26 @@ export const getDb = () => {
     db.exec('ALTER TABLE accounts ADD COLUMN signalsUpdatedAt TEXT')
   }
 
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS users (
+      id TEXT PRIMARY KEY,
+      email TEXT NOT NULL UNIQUE,
+      passwordHash TEXT NOT NULL,
+      name TEXT NOT NULL,
+      createdAt TEXT NOT NULL
+    );
+  `)
+
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS sessions (
+      id TEXT PRIMARY KEY,
+      userId TEXT NOT NULL,
+      expiresAt TEXT NOT NULL,
+      createdAt TEXT NOT NULL,
+      FOREIGN KEY (userId) REFERENCES users(id) ON DELETE CASCADE
+    );
+  `)
+
   const count = db.prepare('SELECT COUNT(1) as c FROM accounts').get() as { c: number }
   if (count.c === 0) {
     const insert = db.prepare(`
