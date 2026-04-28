@@ -25,6 +25,7 @@ export default function HomePage() {
   const [accounts, setAccounts] = useState<Account[]>([])
   const [searchFilters, setSearchFilters] = useState<SearchFilters>({})
   const [isCreateOpen, setIsCreateOpen] = useState(false)
+  const [showMoreFilters, setShowMoreFilters] = useState(false)
   const [isLoadingAccounts, setIsLoadingAccounts] = useState(false)
   const [loadAccountsError, setLoadAccountsError] = useState<string | null>(null)
   const [createForm, setCreateForm] = useState({
@@ -85,15 +86,16 @@ export default function HomePage() {
   const filteredAccounts = accounts.filter(account => {
     if (searchFilters.query) {
       const query = searchFilters.query.toLowerCase()
-      return (
+      const matchesQuery =
         account.name.toLowerCase().includes(query) ||
         account.company?.toLowerCase().includes(query) ||
         account.email?.toLowerCase().includes(query)
-      )
+      if (!matchesQuery) return false
     }
     if (searchFilters.industry && account.industry !== searchFilters.industry) return false
     if (searchFilters.status && account.status !== searchFilters.status) return false
     if (searchFilters.value && account.value !== searchFilters.value) return false
+    if (searchFilters.location && account.location !== searchFilters.location) return false
     return true
   })
 
@@ -107,6 +109,35 @@ export default function HomePage() {
   const canCreate = useMemo(() => {
     return createForm.name.trim().length > 0
   }, [createForm.name])
+
+  const onExport = useCallback(() => {
+    const headers = ['Name', 'Email', 'Company', 'Industry', 'Location', 'Status', 'Value', 'Score', 'Signals', 'Created', 'Updated']
+    const escCsv = (v: string) => {
+      if (v.includes(',') || v.includes('"') || v.includes('\n')) return `"${v.replace(/"/g, '""')}"`
+      return v
+    }
+    const rows = filteredAccounts.map((a) => [
+      a.name,
+      a.email ?? '',
+      a.company ?? '',
+      a.industry ?? '',
+      a.location ?? '',
+      a.status,
+      a.value,
+      String(a.accountScore ?? ''),
+      String(a.signals?.length ?? 0),
+      a.createdAt.toISOString(),
+      a.updatedAt.toISOString(),
+    ].map(escCsv).join(','))
+    const csv = [headers.join(','), ...rows].join('\n')
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = 'accounts.csv'
+    a.click()
+    URL.revokeObjectURL(url)
+  }, [filteredAccounts])
 
   const resetCreateForm = () => {
     setCreateForm({
@@ -198,7 +229,7 @@ export default function HomePage() {
               <h1 className="text-xl font-semibold text-gray-900">Account Research</h1>
             </div>
             <div className="flex items-center space-x-4">
-              <Button variant="outline" size="sm">
+              <Button variant="outline" size="sm" onClick={onExport}>
                 <Download className="h-4 w-4 mr-2" />
                 Export
               </Button>
@@ -302,12 +333,42 @@ export default function HomePage() {
                 <option value="inactive">Inactive</option>
                 <option value="customer">Customer</option>
               </select>
-              <Button variant="outline" size="sm">
+              <Button variant="outline" size="sm" onClick={() => setShowMoreFilters((v) => !v)}>
                 <Filter className="h-4 w-4 mr-2" />
-                More Filters
+                {showMoreFilters ? 'Less Filters' : 'More Filters'}
               </Button>
             </div>
           </div>
+          {showMoreFilters ? (
+            <div className="flex gap-4 mt-4 pt-4 border-t border-gray-200">
+              <div>
+                <label className="block text-xs font-medium text-gray-500 mb-1">Value</label>
+                <select
+                  value={searchFilters.value || ''}
+                  onChange={(e) => setSearchFilters({ ...searchFilters, value: e.target.value as Account['value'] || undefined })}
+                  className="px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                >
+                  <option value="">All Values</option>
+                  <option value="low">Low</option>
+                  <option value="medium">Medium</option>
+                  <option value="high">High</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-500 mb-1">Location</label>
+                <select
+                  value={searchFilters.location || ''}
+                  onChange={(e) => setSearchFilters({ ...searchFilters, location: e.target.value || undefined })}
+                  className="px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                >
+                  <option value="">All Locations</option>
+                  {Array.from(new Set(accounts.map((a) => a.location).filter((l): l is string => Boolean(l)))).sort().map((loc) => (
+                    <option key={loc} value={loc}>{loc}</option>
+                  ))}
+                </select>
+              </div>
+            </div>
+          ) : null}
         </div>
 
         {/* Accounts Table */}
