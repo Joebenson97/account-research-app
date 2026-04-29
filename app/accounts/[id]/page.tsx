@@ -3,6 +3,7 @@ import { notFound } from 'next/navigation'
 
 import { computeAccountScore } from '@/lib/accountScore'
 import { getDb, rowToAccount } from '@/lib/db'
+import AccountDeleteClient from './AccountDeleteClient'
 import AccountEditClient from './AccountEditClient'
 import AiSummaryClient from './AiSummaryClient'
 import SignalsClient from './SignalsClient'
@@ -49,6 +50,7 @@ export default async function AccountDetailPage({
             </div>
             <div className="flex items-center gap-2">
               <AccountEditClient account={accountForClient} />
+              <AccountDeleteClient accountId={account.id} accountName={account.name} />
               <span className="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-gray-100 text-gray-800">
                 Score: {accountScore}
               </span>

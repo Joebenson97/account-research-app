@@ -161,3 +161,22 @@ export async function PUT(
 
   return NextResponse.json({ account: toResponse(next) })
 }
+
+export async function DELETE(
+  _request: Request,
+  { params }: { params: { id: string } }
+) {
+  const db = getDb()
+
+  const row = db.prepare('SELECT * FROM accounts WHERE id = ?').get(params.id) as
+    | Parameters<typeof rowToAccount>[0]
+    | undefined
+
+  if (!row) {
+    return NextResponse.json({ error: 'Account not found.' }, { status: 404 })
+  }
+
+  db.prepare('DELETE FROM accounts WHERE id = ?').run(params.id)
+
+  return NextResponse.json({ success: true })
+}
