@@ -2,13 +2,17 @@ import { NextResponse } from 'next/server'
 
 import { getPool, ensureSchema, rowToAccount, AccountRow } from '@/lib/db'
 import { generateMockSignals } from '@/lib/signals'
+import { apiGuard } from '@/lib/apiGuard'
 
 export const runtime = 'nodejs'
 
 export async function POST(
-  _request: Request,
+  request: Request,
   { params }: { params: { id: string } }
 ) {
+  const blocked = apiGuard(request)
+  if (blocked) return blocked
+
   await ensureSchema()
   const pool = getPool()
   const result = await pool.query(

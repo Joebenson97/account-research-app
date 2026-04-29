@@ -2,6 +2,8 @@ import { NextResponse } from 'next/server'
 
 import { getPool, ensureSchema, rowToAccount, AccountRow } from '@/lib/db'
 import { computeAccountScore } from '@/lib/accountScore'
+import { apiGuard } from '@/lib/apiGuard'
+import { updateAccountSchema, formatZodErrors } from '@/lib/validation'
 import { Account } from '@/types/account'
 
 export const runtime = 'nodejs'
@@ -58,9 +60,12 @@ type UpdateAccountRequest = Partial<{
 }>
 
 export async function GET(
-  _request: Request,
+  request: Request,
   { params }: { params: { id: string } }
 ) {
+  const blocked = apiGuard(request)
+  if (blocked) return blocked
+
   await ensureSchema()
   const pool = getPool()
   const result = await pool.query(
@@ -81,6 +86,24 @@ export async function PUT(
   request: Request,
   { params }: { params: { id: string } }
 ) {
+  const blocked = apiGuard(request)
+  if (blocked) return blocked
+
+  let rawBody: unknown
+  try {
+    rawBody = await request.json()
+  } catch {
+    return NextResponse.json({ error: 'Invalid JSON body.' }, { status: 400 })
+  }
+
+  const parsed = updateAccountSchema.safeParse(rawBody)
+  if (!parsed.success) {
+    return NextResponse.json(
+      { error: formatZodErrors(parsed.error) },
+      { status: 400 }
+    )
+  }
+
   await ensureSchema()
   const pool = getPool()
 
@@ -95,7 +118,7 @@ export async function PUT(
   }
 
   const existing = rowToAccount(row)
-  const body = (await request.json()) as UpdateAccountRequest
+  const body = parsed.data
 
   const next: Account = {
     ...existing,
@@ -107,9 +130,9 @@ export async function PUT(
     location: body.location !== undefined ? (body.location.trim() || undefined) : existing.location,
     website: body.website !== undefined ? (body.website.trim() || undefined) : existing.website,
     description: body.description !== undefined ? (body.description.trim() || undefined) : existing.description,
-    foundedYear: body.foundedYear !== undefined ? body.foundedYear : existing.foundedYear,
-    employeeCount: body.employeeCount !== undefined ? body.employeeCount : existing.employeeCount,
-    revenue: body.revenue !== undefined ? body.revenue : existing.revenue,
+    foundedYear: body.foundedYear !== undefined ? (body.foundedYear ?? undefined) : existing.foundedYear,
+    employeeCount: body.employeeCount !== undefined ? (body.employeeCount ?? undefined) : existing.employeeCount,
+    revenue: body.revenue !== undefined ? (body.revenue ?? undefined) : existing.revenue,
     socialMedia: body.socialMedia !== undefined ? body.socialMedia : existing.socialMedia,
     tags: body.tags !== undefined ? body.tags : existing.tags,
     researchNotes: body.researchNotes !== undefined ? (body.researchNotes.trim() || undefined) : existing.researchNotes,
@@ -168,9 +191,12 @@ export async function PUT(
 }
 
 export async function DELETE(
-  _request: Request,
+  request: Request,
   { params }: { params: { id: string } }
 ) {
+  const blocked = apiGuard(request)
+  if (blocked) return blocked
+
   await ensureSchema()
   const pool = getPool()
 

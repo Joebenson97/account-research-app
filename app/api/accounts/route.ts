@@ -2,6 +2,8 @@ import { NextResponse } from 'next/server'
 
 import { getPool, ensureSchema, rowToAccount, AccountRow } from '@/lib/db'
 import { computeAccountScore } from '@/lib/accountScore'
+import { apiGuard } from '@/lib/apiGuard'
+import { createAccountSchema, formatZodErrors } from '@/lib/validation'
 import { Account } from '@/types/account'
 
 export const runtime = 'nodejs'
@@ -53,7 +55,10 @@ const toResponse = (a: Account): AccountResponse => ({
   signalsUpdatedAt: a.signalsUpdatedAt ? a.signalsUpdatedAt.toISOString() : undefined,
 })
 
-export async function GET() {
+export async function GET(request: Request) {
+  const blocked = apiGuard(request)
+  if (blocked) return blocked
+
   await ensureSchema()
   const pool = getPool()
   const result = await pool.query(
@@ -64,11 +69,25 @@ export async function GET() {
 }
 
 export async function POST(request: Request) {
-  const body = (await request.json()) as CreateAccountRequest
+  const blocked = apiGuard(request)
+  if (blocked) return blocked
 
-  if (!body?.name || body.name.trim().length === 0) {
-    return NextResponse.json({ error: 'Account name is required.' }, { status: 400 })
+  let rawBody: unknown
+  try {
+    rawBody = await request.json()
+  } catch {
+    return NextResponse.json({ error: 'Invalid JSON body.' }, { status: 400 })
   }
+
+  const parsed = createAccountSchema.safeParse(rawBody)
+  if (!parsed.success) {
+    return NextResponse.json(
+      { error: formatZodErrors(parsed.error) },
+      { status: 400 }
+    )
+  }
+
+  const body = parsed.data
 
   const now = new Date()
   const newAccount: Account = {
