@@ -2,7 +2,7 @@ import Link from 'next/link'
 import { notFound } from 'next/navigation'
 
 import { computeAccountScore } from '@/lib/accountScore'
-import { getDb, rowToAccount } from '@/lib/db'
+import { getPool, ensureSchema, rowToAccount, AccountRow } from '@/lib/db'
 import AccountDeleteClient from './AccountDeleteClient'
 import AccountEditClient from './AccountEditClient'
 import AiSummaryClient from './AiSummaryClient'
@@ -13,10 +13,13 @@ export default async function AccountDetailPage({
 }: {
   params: { id: string }
 }) {
-  const db = getDb()
-  const row = db.prepare('SELECT * FROM accounts WHERE id = ? AND deletedAt IS NULL').get(params.id) as
-    | Parameters<typeof rowToAccount>[0]
-    | undefined
+  await ensureSchema()
+  const pool = getPool()
+  const result = await pool.query(
+    'SELECT * FROM accounts WHERE id = $1 AND "deletedAt" IS NULL',
+    [params.id]
+  )
+  const row = result.rows[0] as AccountRow | undefined
 
   if (!row) notFound()
 

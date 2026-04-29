@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server'
 
-import { getDb, rowToAccount } from '@/lib/db'
+import { getPool, ensureSchema, rowToAccount, AccountRow } from '@/lib/db'
 import { computeAccountScore } from '@/lib/accountScore'
 import { Account } from '@/types/account'
 
@@ -54,11 +54,12 @@ const toResponse = (a: Account): AccountResponse => ({
 })
 
 export async function GET() {
-  const db = getDb()
-  const rows = db
-    .prepare('SELECT * FROM accounts WHERE deletedAt IS NULL ORDER BY datetime(createdAt) DESC')
-    .all() as Parameters<typeof rowToAccount>[0][]
-  const accounts = rows.map((r) => rowToAccount(r)).map(toResponse)
+  await ensureSchema()
+  const pool = getPool()
+  const result = await pool.query(
+    'SELECT * FROM accounts WHERE "deletedAt" IS NULL ORDER BY "createdAt" DESC'
+  )
+  const accounts = (result.rows as AccountRow[]).map((r) => rowToAccount(r)).map(toResponse)
   return NextResponse.json({ accounts })
 }
 
@@ -91,40 +92,40 @@ export async function POST(request: Request) {
     value: body.value ?? 'medium',
   }
 
-  const db = getDb()
-  const stmt = db.prepare(`
-    INSERT INTO accounts (
+  await ensureSchema()
+  const pool = getPool()
+  await pool.query(
+    `INSERT INTO accounts (
       id, name, email, phone, company, industry, location, website, description,
-      foundedYear, employeeCount, revenue, socialMedia, tags, researchNotes,
-      status, value, createdAt, updatedAt
+      "foundedYear", "employeeCount", revenue, "socialMedia", tags, "researchNotes",
+      status, value, "createdAt", "updatedAt"
     ) VALUES (
-      @id, @name, @email, @phone, @company, @industry, @location, @website, @description,
-      @foundedYear, @employeeCount, @revenue, @socialMedia, @tags, @researchNotes,
-      @status, @value, @createdAt, @updatedAt
-    )
-  `)
-
-  stmt.run({
-    id: newAccount.id,
-    name: newAccount.name,
-    email: newAccount.email ?? null,
-    phone: newAccount.phone ?? null,
-    company: newAccount.company ?? null,
-    industry: newAccount.industry ?? null,
-    location: newAccount.location ?? null,
-    website: newAccount.website ?? null,
-    description: newAccount.description ?? null,
-    foundedYear: newAccount.foundedYear ?? null,
-    employeeCount: newAccount.employeeCount ?? null,
-    revenue: newAccount.revenue ?? null,
-    socialMedia: newAccount.socialMedia ? JSON.stringify(newAccount.socialMedia) : null,
-    tags: JSON.stringify(newAccount.tags ?? []),
-    researchNotes: newAccount.researchNotes ?? null,
-    status: newAccount.status,
-    value: newAccount.value,
-    createdAt: newAccount.createdAt.toISOString(),
-    updatedAt: newAccount.updatedAt.toISOString(),
-  })
+      $1, $2, $3, $4, $5, $6, $7, $8, $9,
+      $10, $11, $12, $13, $14, $15,
+      $16, $17, $18, $19
+    )`,
+    [
+      newAccount.id,
+      newAccount.name,
+      newAccount.email ?? null,
+      newAccount.phone ?? null,
+      newAccount.company ?? null,
+      newAccount.industry ?? null,
+      newAccount.location ?? null,
+      newAccount.website ?? null,
+      newAccount.description ?? null,
+      newAccount.foundedYear ?? null,
+      newAccount.employeeCount ?? null,
+      newAccount.revenue ?? null,
+      newAccount.socialMedia ? JSON.stringify(newAccount.socialMedia) : null,
+      JSON.stringify(newAccount.tags ?? []),
+      newAccount.researchNotes ?? null,
+      newAccount.status,
+      newAccount.value,
+      newAccount.createdAt.toISOString(),
+      newAccount.updatedAt.toISOString(),
+    ]
+  )
 
   return NextResponse.json({ account: toResponse(newAccount) }, { status: 201 })
 }

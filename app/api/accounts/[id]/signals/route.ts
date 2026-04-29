@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server'
 
-import { getDb, rowToAccount } from '@/lib/db'
+import { getPool, ensureSchema, rowToAccount, AccountRow } from '@/lib/db'
 import { generateMockSignals } from '@/lib/signals'
 
 export const runtime = 'nodejs'
@@ -9,10 +9,13 @@ export async function POST(
   _request: Request,
   { params }: { params: { id: string } }
 ) {
-  const db = getDb()
-  const row = db.prepare('SELECT * FROM accounts WHERE id = ? AND deletedAt IS NULL').get(params.id) as
-    | Parameters<typeof rowToAccount>[0]
-    | undefined
+  await ensureSchema()
+  const pool = getPool()
+  const result = await pool.query(
+    'SELECT * FROM accounts WHERE id = $1 AND "deletedAt" IS NULL',
+    [params.id]
+  )
+  const row = result.rows[0] as AccountRow | undefined
 
   if (!row) {
     return NextResponse.json({ error: 'Not found' }, { status: 404 })
@@ -22,25 +25,24 @@ export async function POST(
   const signals = generateMockSignals(account)
   const now = new Date()
 
-  db.prepare(
-    `
-      UPDATE accounts SET
-        signalsJson=@signalsJson,
-        signalsUpdatedAt=@signalsUpdatedAt,
-        updatedAt=@updatedAt
-      WHERE id=@id
-    `
-  ).run({
-    id: account.id,
-    signalsJson: JSON.stringify(
-      signals.map((s) => ({
-        ...s,
-        detectedAt: s.detectedAt.toISOString(),
-      }))
-    ),
-    signalsUpdatedAt: now.toISOString(),
-    updatedAt: now.toISOString(),
-  })
+  await pool.query(
+    `UPDATE accounts SET
+      "signalsJson"=$1,
+      "signalsUpdatedAt"=$2,
+      "updatedAt"=$3
+    WHERE id=$4`,
+    [
+      JSON.stringify(
+        signals.map((s) => ({
+          ...s,
+          detectedAt: s.detectedAt.toISOString(),
+        }))
+      ),
+      now.toISOString(),
+      now.toISOString(),
+      account.id,
+    ]
+  )
 
   return NextResponse.json({
     signals: signals.map((s) => ({
