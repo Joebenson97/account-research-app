@@ -63,12 +63,11 @@ export default function AccountDeleteClient({ accountId, accountName }: Props) {
 
             <div className="px-6 py-4">
               <p className="text-sm text-gray-700">
-                Are you sure you want to delete <strong>{accountName}</strong>? This will permanently
-                remove the account and all associated data including AI summaries, signals, and
-                research notes.
+                Are you sure you want to delete <strong>{accountName}</strong>? The account will be
+                removed from all views and dashboards.
               </p>
-              <p className="mt-2 text-sm text-red-600 font-medium">
-                This action cannot be undone.
+              <p className="mt-2 text-sm text-gray-500">
+                This is a soft delete — the data is retained in the database and can be recovered by an administrator.
               </p>
 
               {error ? (

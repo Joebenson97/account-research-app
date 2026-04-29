@@ -84,6 +84,9 @@ export const getDb = () => {
   if (!columns.includes('signalsUpdatedAt')) {
     db.exec('ALTER TABLE accounts ADD COLUMN signalsUpdatedAt TEXT')
   }
+  if (!columns.includes('deletedAt')) {
+    db.exec('ALTER TABLE accounts ADD COLUMN deletedAt TEXT')
+  }
 
   const count = db.prepare('SELECT COUNT(1) as c FROM accounts').get() as { c: number }
   if (count.c === 0) {

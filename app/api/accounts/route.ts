@@ -56,7 +56,7 @@ const toResponse = (a: Account): AccountResponse => ({
 export async function GET() {
   const db = getDb()
   const rows = db
-    .prepare('SELECT * FROM accounts ORDER BY datetime(createdAt) DESC')
+    .prepare('SELECT * FROM accounts WHERE deletedAt IS NULL ORDER BY datetime(createdAt) DESC')
     .all() as Parameters<typeof rowToAccount>[0][]
   const accounts = rows.map((r) => rowToAccount(r)).map(toResponse)
   return NextResponse.json({ accounts })

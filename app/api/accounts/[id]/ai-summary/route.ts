@@ -10,7 +10,7 @@ export async function POST(
   { params }: { params: { id: string } }
 ) {
   const db = getDb()
-  const row = db.prepare('SELECT * FROM accounts WHERE id = ?').get(params.id) as
+  const row = db.prepare('SELECT * FROM accounts WHERE id = ? AND deletedAt IS NULL').get(params.id) as
     | Parameters<typeof rowToAccount>[0]
     | undefined
 

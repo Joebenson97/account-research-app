@@ -62,7 +62,7 @@ export async function GET(
   { params }: { params: { id: string } }
 ) {
   const db = getDb()
-  const row = db.prepare('SELECT * FROM accounts WHERE id = ?').get(params.id) as
+  const row = db.prepare('SELECT * FROM accounts WHERE id = ? AND deletedAt IS NULL').get(params.id) as
     | Parameters<typeof rowToAccount>[0]
     | undefined
 
@@ -80,7 +80,7 @@ export async function PUT(
 ) {
   const db = getDb()
 
-  const row = db.prepare('SELECT * FROM accounts WHERE id = ?').get(params.id) as
+  const row = db.prepare('SELECT * FROM accounts WHERE id = ? AND deletedAt IS NULL').get(params.id) as
     | Parameters<typeof rowToAccount>[0]
     | undefined
 
@@ -168,7 +168,7 @@ export async function DELETE(
 ) {
   const db = getDb()
 
-  const row = db.prepare('SELECT * FROM accounts WHERE id = ?').get(params.id) as
+  const row = db.prepare('SELECT * FROM accounts WHERE id = ? AND deletedAt IS NULL').get(params.id) as
     | Parameters<typeof rowToAccount>[0]
     | undefined
 
@@ -176,7 +176,7 @@ export async function DELETE(
     return NextResponse.json({ error: 'Account not found.' }, { status: 404 })
   }
 
-  db.prepare('DELETE FROM accounts WHERE id = ?').run(params.id)
+  db.prepare('UPDATE accounts SET deletedAt = ? WHERE id = ?').run(new Date().toISOString(), params.id)
 
   return NextResponse.json({ success: true })
 }
