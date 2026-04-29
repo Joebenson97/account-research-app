@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
 import { Search, Plus, Filter, Download, Building2, Users, TrendingUp, Calendar } from 'lucide-react'
+import UserNav from '@/components/UserNav'
 import { Account, SearchFilters } from '@/types/account'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -229,6 +230,7 @@ export default function HomePage() {
               <h1 className="text-xl font-semibold text-gray-900">Account Research</h1>
             </div>
             <div className="flex items-center space-x-4">
+              <UserNav />
               <Button variant="outline" size="sm" onClick={onExport}>
                 <Download className="h-4 w-4 mr-2" />
                 Export

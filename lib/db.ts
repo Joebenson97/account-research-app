@@ -1,4 +1,5 @@
 import Database from 'better-sqlite3'
+import bcrypt from 'bcryptjs'
 import fs from 'fs'
 import path from 'path'
 
@@ -131,7 +132,42 @@ export const getDb = () => {
     tx(mockAccounts)
   }
 
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS users (
+      id TEXT PRIMARY KEY,
+      email TEXT NOT NULL UNIQUE,
+      name TEXT NOT NULL,
+      passwordHash TEXT NOT NULL,
+      createdAt TEXT NOT NULL
+    );
+  `)
+
+  const userCount = db.prepare('SELECT COUNT(1) as c FROM users').get() as { c: number }
+  if (userCount.c === 0) {
+    const hash = bcrypt.hashSync('admin123', 10)
+    db.prepare(
+      'INSERT INTO users (id, email, name, passwordHash, createdAt) VALUES (?, ?, ?, ?, ?)'
+    ).run('1', 'admin@company.com', 'Admin', hash, new Date().toISOString())
+  }
+
   return db
+}
+
+export type UserRow = {
+  id: string
+  email: string
+  name: string
+  passwordHash: string
+  createdAt: string
+}
+
+export const findUserByEmail = (email: string): UserRow | undefined => {
+  const db = getDb()
+  return db.prepare('SELECT * FROM users WHERE email = ?').get(email) as UserRow | undefined
+}
+
+export const verifyPassword = (plaintext: string, hash: string): boolean => {
+  return bcrypt.compareSync(plaintext, hash)
 }
 
 export const rowToAccount = (row: AccountRow): Account => {
