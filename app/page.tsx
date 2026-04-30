@@ -1,8 +1,10 @@
 'use client'
 
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
-import { Search, Plus, Filter, Download, Building2, Users, TrendingUp, Calendar } from 'lucide-react'
+import { useSession } from 'next-auth/react'
+import { Search, Plus, Filter, Download, Building2, Users, TrendingUp, Calendar, ChevronLeft, ChevronRight } from 'lucide-react'
+import UserNav from '@/components/UserNav'
 import { Account, SearchFilters } from '@/types/account'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -21,10 +23,62 @@ type AccountApi = Omit<Account, 'createdAt' | 'updatedAt'> & {
   signalsUpdatedAt?: string
 }
 
+type PaginationInfo = {
+  page: number
+  limit: number
+  total: number
+  totalPages: number
+}
+
+type StatsInfo = {
+  total: number
+  active: number
+  prospects: number
+  highValue: number
+}
+
+type FilterOptions = {
+  industries: string[]
+  locations: string[]
+}
+
+type ApiResponse = {
+  accounts: AccountApi[]
+  pagination: PaginationInfo
+  stats: StatsInfo
+  filterOptions: FilterOptions
+}
+
+function hydrateAccount(a: AccountApi): Account {
+  return {
+    ...a,
+    createdAt: new Date(a.createdAt),
+    updatedAt: new Date(a.updatedAt),
+    aiSummaryUpdatedAt: a.aiSummaryUpdatedAt ? new Date(a.aiSummaryUpdatedAt) : undefined,
+    signals: a.signals
+      ? a.signals.map((s) => ({
+          ...s,
+          detectedAt: new Date(s.detectedAt),
+        }))
+      : undefined,
+    signalsUpdatedAt: a.signalsUpdatedAt ? new Date(a.signalsUpdatedAt) : undefined,
+  }
+}
+
 export default function HomePage() {
+  const { data: session } = useSession()
+  const userRole = (session?.user as { role?: string } | undefined)?.role ?? 'viewer'
+  const canEdit = userRole === 'admin' || userRole === 'editor'
+  const canDelete = userRole === 'admin'
+
   const [accounts, setAccounts] = useState<Account[]>([])
   const [searchFilters, setSearchFilters] = useState<SearchFilters>({})
+  const [page, setPage] = useState(1)
+  const [pagination, setPagination] = useState<PaginationInfo>({ page: 1, limit: 20, total: 0, totalPages: 0 })
+  const [stats, setStats] = useState<StatsInfo>({ total: 0, active: 0, prospects: 0, highValue: 0 })
+  const [filterOptions, setFilterOptions] = useState<FilterOptions>({ industries: [], locations: [] })
   const [isCreateOpen, setIsCreateOpen] = useState(false)
+  const [showMoreFilters, setShowMoreFilters] = useState(false)
   const [isLoadingAccounts, setIsLoadingAccounts] = useState(false)
   const [loadAccountsError, setLoadAccountsError] = useState<string | null>(null)
   const [createForm, setCreateForm] = useState({
@@ -44,33 +98,34 @@ export default function HomePage() {
   const [createError, setCreateError] = useState<string | null>(null)
   const [isCreating, setIsCreating] = useState(false)
 
-  const loadAccounts = useCallback(async () => {
+  const searchTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  const loadAccounts = useCallback(async (pageNum: number, filters: SearchFilters) => {
     setIsLoadingAccounts(true)
     setLoadAccountsError(null)
 
     try {
-      const res = await fetch('/api/accounts', { method: 'GET' })
+      const params = new URLSearchParams()
+      params.set('page', String(pageNum))
+      params.set('limit', '20')
+      if (filters.query) params.set('search', filters.query)
+      if (filters.status) params.set('status', filters.status)
+      if (filters.industry) params.set('industry', filters.industry)
+      if (filters.value) params.set('value', filters.value)
+      if (filters.location) params.set('location', filters.location)
+
+      const res = await fetch(`/api/accounts?${params.toString()}`, { method: 'GET' })
       if (!res.ok) {
         setLoadAccountsError('Failed to load accounts.')
         setIsLoadingAccounts(false)
         return
       }
 
-      const data = (await res.json()) as { accounts: AccountApi[] }
-      const hydrated = (data.accounts ?? []).map((a) => ({
-        ...a,
-        createdAt: new Date(a.createdAt),
-        updatedAt: new Date(a.updatedAt),
-        aiSummaryUpdatedAt: a.aiSummaryUpdatedAt ? new Date(a.aiSummaryUpdatedAt) : undefined,
-        signals: a.signals
-          ? a.signals.map((s) => ({
-              ...s,
-              detectedAt: new Date(s.detectedAt),
-            }))
-          : undefined,
-        signalsUpdatedAt: a.signalsUpdatedAt ? new Date(a.signalsUpdatedAt) : undefined,
-      }))
-      setAccounts(hydrated)
+      const data = (await res.json()) as ApiResponse
+      setAccounts((data.accounts ?? []).map(hydrateAccount))
+      setPagination(data.pagination)
+      setStats(data.stats)
+      setFilterOptions(data.filterOptions)
       setIsLoadingAccounts(false)
     } catch {
       setLoadAccountsError('Failed to load accounts.')
@@ -79,34 +134,53 @@ export default function HomePage() {
   }, [])
 
   useEffect(() => {
-    void loadAccounts()
-  }, [loadAccounts])
+    void loadAccounts(page, searchFilters)
+  }, [loadAccounts, page, searchFilters])
 
-  const filteredAccounts = accounts.filter(account => {
-    if (searchFilters.query) {
-      const query = searchFilters.query.toLowerCase()
-      return (
-        account.name.toLowerCase().includes(query) ||
-        account.company?.toLowerCase().includes(query) ||
-        account.email?.toLowerCase().includes(query)
-      )
-    }
-    if (searchFilters.industry && account.industry !== searchFilters.industry) return false
-    if (searchFilters.status && account.status !== searchFilters.status) return false
-    if (searchFilters.value && account.value !== searchFilters.value) return false
-    return true
-  })
+  const onFilterChange = useCallback((newFilters: SearchFilters) => {
+    setSearchFilters(newFilters)
+    setPage(1)
+  }, [])
 
-  const stats = {
-    total: accounts.length,
-    active: accounts.filter(a => a.status === 'active').length,
-    prospects: accounts.filter(a => a.status === 'prospect').length,
-    highValue: accounts.filter(a => a.value === 'high').length,
-  }
+  const onSearchChange = useCallback((query: string) => {
+    if (searchTimeoutRef.current) clearTimeout(searchTimeoutRef.current)
+    searchTimeoutRef.current = setTimeout(() => {
+      onFilterChange({ ...searchFilters, query: query || undefined })
+    }, 300)
+  }, [searchFilters, onFilterChange])
 
   const canCreate = useMemo(() => {
     return createForm.name.trim().length > 0
   }, [createForm.name])
+
+  const onExport = useCallback(() => {
+    const headers = ['Name', 'Email', 'Company', 'Industry', 'Location', 'Status', 'Value', 'Score', 'Signals', 'Created', 'Updated']
+    const escCsv = (v: string) => {
+      if (v.includes(',') || v.includes('"') || v.includes('\n')) return `"${v.replace(/"/g, '""')}"`
+      return v
+    }
+    const rows = accounts.map((a) => [
+      a.name,
+      a.email ?? '',
+      a.company ?? '',
+      a.industry ?? '',
+      a.location ?? '',
+      a.status,
+      a.value,
+      String(a.accountScore ?? ''),
+      String(a.signals?.length ?? 0),
+      a.createdAt.toISOString(),
+      a.updatedAt.toISOString(),
+    ].map(escCsv).join(','))
+    const csv = [headers.join(','), ...rows].join('\n')
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = 'accounts.csv'
+    a.click()
+    URL.revokeObjectURL(url)
+  }, [accounts])
 
   const resetCreateForm = () => {
     setCreateForm({
@@ -171,16 +245,11 @@ export default function HomePage() {
         return
       }
 
-      const data = (await res.json()) as { account: AccountApi }
-      const created: Account = {
-        ...data.account,
-        createdAt: new Date(data.account.createdAt),
-        updatedAt: new Date(data.account.updatedAt),
-      }
-      setAccounts((prev) => [created, ...prev])
       setIsCreateOpen(false)
       resetCreateForm()
       setIsCreating(false)
+      setPage(1)
+      void loadAccounts(1, searchFilters)
     } catch {
       setCreateError('Failed to create account.')
       setIsCreating(false)
@@ -198,20 +267,23 @@ export default function HomePage() {
               <h1 className="text-xl font-semibold text-gray-900">Account Research</h1>
             </div>
             <div className="flex items-center space-x-4">
-              <Button variant="outline" size="sm">
+              <UserNav />
+              <Button variant="outline" size="sm" onClick={onExport}>
                 <Download className="h-4 w-4 mr-2" />
                 Export
               </Button>
-              <Button
-                size="sm"
-                onClick={() => {
-                  setIsCreateOpen(true)
-                  setCreateError(null)
-                }}
-              >
-                <Plus className="h-4 w-4 mr-2" />
-                Add Account
-              </Button>
+              {canEdit ? (
+                <Button
+                  size="sm"
+                  onClick={() => {
+                    setIsCreateOpen(true)
+                    setCreateError(null)
+                  }}
+                >
+                  <Plus className="h-4 w-4 mr-2" />
+                  Add Account
+                </Button>
+              ) : null}
             </div>
           </div>
         </div>
@@ -274,8 +346,8 @@ export default function HomePage() {
                 <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400" />
                 <Input
                   placeholder="Search accounts..."
-                  value={searchFilters.query || ''}
-                  onChange={(e) => setSearchFilters({ ...searchFilters, query: e.target.value })}
+                  defaultValue={searchFilters.query || ''}
+                  onChange={(e) => onSearchChange(e.target.value)}
                   className="pl-10"
                 />
               </div>
@@ -283,17 +355,17 @@ export default function HomePage() {
             <div className="flex gap-2">
               <select
                 value={searchFilters.industry || ''}
-                onChange={(e) => setSearchFilters({ ...searchFilters, industry: e.target.value || undefined })}
+                onChange={(e) => onFilterChange({ ...searchFilters, industry: e.target.value || undefined })}
                 className="px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
               >
                 <option value="">All Industries</option>
-                <option value="Technology">Technology</option>
-                <option value="Financial Technology">Financial Technology</option>
-                <option value="Marketing & Advertising">Marketing & Advertising</option>
+                {filterOptions.industries.map((ind) => (
+                  <option key={ind} value={ind}>{ind}</option>
+                ))}
               </select>
               <select
                 value={searchFilters.status || ''}
-                onChange={(e) => setSearchFilters({ ...searchFilters, status: e.target.value as Account['status'] || undefined })}
+                onChange={(e) => onFilterChange({ ...searchFilters, status: e.target.value as Account['status'] || undefined })}
                 className="px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
               >
                 <option value="">All Status</option>
@@ -302,19 +374,49 @@ export default function HomePage() {
                 <option value="inactive">Inactive</option>
                 <option value="customer">Customer</option>
               </select>
-              <Button variant="outline" size="sm">
+              <Button variant="outline" size="sm" onClick={() => setShowMoreFilters((v) => !v)}>
                 <Filter className="h-4 w-4 mr-2" />
-                More Filters
+                {showMoreFilters ? 'Less Filters' : 'More Filters'}
               </Button>
             </div>
           </div>
+          {showMoreFilters ? (
+            <div className="flex gap-4 mt-4 pt-4 border-t border-gray-200">
+              <div>
+                <label className="block text-xs font-medium text-gray-500 mb-1">Value</label>
+                <select
+                  value={searchFilters.value || ''}
+                  onChange={(e) => onFilterChange({ ...searchFilters, value: e.target.value as Account['value'] || undefined })}
+                  className="px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                >
+                  <option value="">All Values</option>
+                  <option value="low">Low</option>
+                  <option value="medium">Medium</option>
+                  <option value="high">High</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-500 mb-1">Location</label>
+                <select
+                  value={searchFilters.location || ''}
+                  onChange={(e) => onFilterChange({ ...searchFilters, location: e.target.value || undefined })}
+                  className="px-3 py-2 border border-gray-300 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                >
+                  <option value="">All Locations</option>
+                  {filterOptions.locations.map((loc) => (
+                    <option key={loc} value={loc}>{loc}</option>
+                  ))}
+                </select>
+              </div>
+            </div>
+          ) : null}
         </div>
 
         {/* Accounts Table */}
         <div className="bg-white rounded-lg shadow overflow-hidden">
           <div className="px-6 py-4 border-b border-gray-200">
             <h2 className="text-lg font-medium text-gray-900">
-              Accounts ({filteredAccounts.length})
+              Accounts ({pagination.total})
             </h2>
           </div>
           <div className="overflow-x-auto">
@@ -353,7 +455,7 @@ export default function HomePage() {
                     <td className="px-6 py-4 text-sm text-red-600" colSpan={8}>
                       <div className="flex items-center justify-between gap-4">
                         <div>{loadAccountsError}</div>
-                        <Button variant="outline" size="sm" onClick={loadAccounts}>
+                        <Button variant="outline" size="sm" onClick={() => loadAccounts(page, searchFilters)}>
                           Retry
                         </Button>
                       </div>
@@ -368,7 +470,7 @@ export default function HomePage() {
                 ) : null}
 
                 {!loadAccountsError && !isLoadingAccounts
-                  ? filteredAccounts.map((account) => (
+                  ? accounts.map((account) => (
                   <tr key={account.id} className="hover:bg-gray-50">
                     <td className="px-6 py-4 whitespace-nowrap">
                       <div>
@@ -421,9 +523,49 @@ export default function HomePage() {
                   </tr>
                   ))
                   : null}
+
+                {!loadAccountsError && !isLoadingAccounts && accounts.length === 0 ? (
+                  <tr>
+                    <td className="px-6 py-8 text-sm text-gray-500 text-center" colSpan={8}>
+                      No accounts found.
+                    </td>
+                  </tr>
+                ) : null}
               </tbody>
             </table>
           </div>
+
+          {/* Pagination Controls */}
+          {pagination.totalPages > 1 ? (
+            <div className="px-6 py-4 border-t border-gray-200 flex items-center justify-between">
+              <div className="text-sm text-gray-500">
+                Showing {((pagination.page - 1) * pagination.limit) + 1}–{Math.min(pagination.page * pagination.limit, pagination.total)} of {pagination.total} accounts
+              </div>
+              <div className="flex items-center gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={pagination.page <= 1}
+                  onClick={() => setPage(pagination.page - 1)}
+                >
+                  <ChevronLeft className="h-4 w-4" />
+                  Previous
+                </Button>
+                <span className="text-sm text-gray-700">
+                  Page {pagination.page} of {pagination.totalPages}
+                </span>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={pagination.page >= pagination.totalPages}
+                  onClick={() => setPage(pagination.page + 1)}
+                >
+                  Next
+                  <ChevronRight className="h-4 w-4" />
+                </Button>
+              </div>
+            </div>
+          ) : null}
         </div>
       </main>
 

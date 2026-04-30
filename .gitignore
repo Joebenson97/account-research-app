@@ -26,8 +26,11 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 
-# sqlite data
+# sqlite data (legacy)
 /data/*.db
 /data/*.db-journal
 /data/*.db-wal
 /data/*.db-shm
+
+# database backups
+/backups/

@@ -1,8 +1,11 @@
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
+import { getServerSession } from 'next-auth'
 
 import { computeAccountScore } from '@/lib/accountScore'
-import { getDb, rowToAccount } from '@/lib/db'
+import { getPool, ensureSchema, rowToAccount, AccountRow } from '@/lib/db'
+import { authOptions } from '@/lib/auth'
+import AccountDeleteClient from './AccountDeleteClient'
 import AccountEditClient from './AccountEditClient'
 import AiSummaryClient from './AiSummaryClient'
 import SignalsClient from './SignalsClient'
@@ -12,10 +15,18 @@ export default async function AccountDetailPage({
 }: {
   params: { id: string }
 }) {
-  const db = getDb()
-  const row = db.prepare('SELECT * FROM accounts WHERE id = ?').get(params.id) as
-    | Parameters<typeof rowToAccount>[0]
-    | undefined
+  const session = await getServerSession(authOptions)
+  const userRole = (session?.user as { role?: string } | undefined)?.role ?? 'viewer'
+  const canEdit = userRole === 'admin' || userRole === 'editor'
+  const canDelete = userRole === 'admin'
+
+  await ensureSchema()
+  const pool = getPool()
+  const result = await pool.query(
+    'SELECT * FROM accounts WHERE id = $1 AND "deletedAt" IS NULL',
+    [params.id]
+  )
+  const row = result.rows[0] as AccountRow | undefined
 
   if (!row) notFound()
 
@@ -48,7 +59,8 @@ export default async function AccountDetailPage({
               <h1 className="text-xl font-semibold text-gray-900">{account.name}</h1>
             </div>
             <div className="flex items-center gap-2">
-              <AccountEditClient account={accountForClient} />
+              {canEdit ? <AccountEditClient account={accountForClient} /> : null}
+              {canDelete ? <AccountDeleteClient accountId={account.id} accountName={account.name} /> : null}
               <span className="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-gray-100 text-gray-800">
                 Score: {accountScore}
               </span>
@@ -156,7 +168,7 @@ export default async function AccountDetailPage({
                       : 'Not generated yet.'}
                   </div>
                 </div>
-                <AiSummaryClient accountId={account.id} hasSummary={Boolean(account.aiSummary)} />
+                {canEdit ? <AiSummaryClient accountId={account.id} hasSummary={Boolean(account.aiSummary)} /> : null}
               </div>
 
               {account.aiSummary ? (
@@ -216,7 +228,7 @@ export default async function AccountDetailPage({
                       : 'Not generated yet.'}
                   </div>
                 </div>
-                <SignalsClient accountId={account.id} hasSignals={Boolean(account.signals?.length)} />
+                {canEdit ? <SignalsClient accountId={account.id} hasSignals={Boolean(account.signals?.length)} /> : null}
               </div>
 
               {account.signals?.length ? (

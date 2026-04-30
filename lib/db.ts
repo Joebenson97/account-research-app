@@ -1,11 +1,10 @@
-import Database from 'better-sqlite3'
-import fs from 'fs'
-import path from 'path'
+import { Pool } from 'pg'
+import bcrypt from 'bcryptjs'
 
 import { mockAccounts } from '@/lib/data'
 import { Account } from '@/types/account'
 
-type AccountRow = {
+export type AccountRow = {
   id: string
   name: string
   email: string | null
@@ -29,23 +28,23 @@ type AccountRow = {
   value: Account['value']
   createdAt: string
   updatedAt: string
+  deletedAt: string | null
 }
 
-let db: Database.Database | null = null
+let pool: Pool | null = null
+let initialized = false
 
-const dbFilePath = () => {
-  return path.join(process.cwd(), 'data', 'accounts.db')
+export const getPool = (): Pool => {
+  if (pool) return pool
+  pool = new Pool({ connectionString: process.env.DATABASE_URL })
+  return pool
 }
 
-export const getDb = () => {
-  if (db) return db
+export const ensureSchema = async (): Promise<void> => {
+  if (initialized) return
+  const p = getPool()
 
-  const file = dbFilePath()
-  fs.mkdirSync(path.dirname(file), { recursive: true })
-  db = new Database(file)
-  db.pragma('journal_mode = WAL')
-
-  db.exec(`
+  await p.query(`
     CREATE TABLE IF NOT EXISTS accounts (
       id TEXT PRIMARY KEY,
       name TEXT NOT NULL,
@@ -56,79 +55,131 @@ export const getDb = () => {
       location TEXT,
       website TEXT,
       description TEXT,
-      foundedYear INTEGER,
-      employeeCount INTEGER,
-      revenue REAL,
-      socialMedia TEXT,
+      "foundedYear" INTEGER,
+      "employeeCount" INTEGER,
+      revenue DOUBLE PRECISION,
+      "socialMedia" TEXT,
       tags TEXT NOT NULL,
-      researchNotes TEXT,
-      aiSummaryJson TEXT,
-      aiSummaryUpdatedAt TEXT,
+      "researchNotes" TEXT,
+      "aiSummaryJson" TEXT,
+      "aiSummaryUpdatedAt" TEXT,
+      "signalsJson" TEXT,
+      "signalsUpdatedAt" TEXT,
       status TEXT NOT NULL,
       value TEXT NOT NULL,
-      createdAt TEXT NOT NULL,
-      updatedAt TEXT NOT NULL
+      "createdAt" TEXT NOT NULL,
+      "updatedAt" TEXT NOT NULL,
+      "deletedAt" TEXT
     );
   `)
 
-  const columns = (db.pragma('table_info(accounts)') as Array<{ name: string }>).map((c) => c.name)
-  if (!columns.includes('aiSummaryJson')) {
-    db.exec('ALTER TABLE accounts ADD COLUMN aiSummaryJson TEXT')
-  }
-  if (!columns.includes('aiSummaryUpdatedAt')) {
-    db.exec('ALTER TABLE accounts ADD COLUMN aiSummaryUpdatedAt TEXT')
-  }
-  if (!columns.includes('signalsJson')) {
-    db.exec('ALTER TABLE accounts ADD COLUMN signalsJson TEXT')
-  }
-  if (!columns.includes('signalsUpdatedAt')) {
-    db.exec('ALTER TABLE accounts ADD COLUMN signalsUpdatedAt TEXT')
+  await p.query(`
+    CREATE TABLE IF NOT EXISTS users (
+      id TEXT PRIMARY KEY,
+      email TEXT NOT NULL UNIQUE,
+      name TEXT NOT NULL,
+      "passwordHash" TEXT NOT NULL,
+      role TEXT NOT NULL DEFAULT 'viewer',
+      "createdAt" TEXT NOT NULL
+    );
+  `)
+
+  // Auto-migrate: add role column if missing
+  const userCols = await p.query(
+    `SELECT column_name FROM information_schema.columns WHERE table_name = 'users'`
+  )
+  const userColNames = userCols.rows.map((r: { column_name: string }) => r.column_name)
+  if (!userColNames.includes('role')) {
+    await p.query(`ALTER TABLE users ADD COLUMN role TEXT NOT NULL DEFAULT 'viewer'`)
+    await p.query(`UPDATE users SET role = 'admin' WHERE email = 'admin@company.com'`)
   }
 
-  const count = db.prepare('SELECT COUNT(1) as c FROM accounts').get() as { c: number }
-  if (count.c === 0) {
-    const insert = db.prepare(`
-      INSERT INTO accounts (
-        id, name, email, phone, company, industry, location, website, description,
-        foundedYear, employeeCount, revenue, socialMedia, tags, researchNotes,
-        status, value, createdAt, updatedAt
-      ) VALUES (
-        @id, @name, @email, @phone, @company, @industry, @location, @website, @description,
-        @foundedYear, @employeeCount, @revenue, @socialMedia, @tags, @researchNotes,
-        @status, @value, @createdAt, @updatedAt
+  const countResult = await p.query('SELECT COUNT(1) as c FROM accounts')
+  if (Number(countResult.rows[0].c) === 0) {
+    for (const a of mockAccounts) {
+      await p.query(
+        `INSERT INTO accounts (
+          id, name, email, phone, company, industry, location, website, description,
+          "foundedYear", "employeeCount", revenue, "socialMedia", tags, "researchNotes",
+          status, value, "createdAt", "updatedAt"
+        ) VALUES (
+          $1, $2, $3, $4, $5, $6, $7, $8, $9,
+          $10, $11, $12, $13, $14, $15,
+          $16, $17, $18, $19
+        )`,
+        [
+          a.id,
+          a.name,
+          a.email ?? null,
+          a.phone ?? null,
+          a.company ?? null,
+          a.industry ?? null,
+          a.location ?? null,
+          a.website ?? null,
+          a.description ?? null,
+          a.foundedYear ?? null,
+          a.employeeCount ?? null,
+          a.revenue ?? null,
+          a.socialMedia ? JSON.stringify(a.socialMedia) : null,
+          JSON.stringify(a.tags ?? []),
+          a.researchNotes ?? null,
+          a.status,
+          a.value,
+          a.createdAt.toISOString(),
+          a.updatedAt.toISOString(),
+        ]
       )
-    `)
-
-    const tx = db.transaction((accounts: Account[]) => {
-      for (const a of accounts) {
-        insert.run({
-          id: a.id,
-          name: a.name,
-          email: a.email ?? null,
-          phone: a.phone ?? null,
-          company: a.company ?? null,
-          industry: a.industry ?? null,
-          location: a.location ?? null,
-          website: a.website ?? null,
-          description: a.description ?? null,
-          foundedYear: a.foundedYear ?? null,
-          employeeCount: a.employeeCount ?? null,
-          revenue: a.revenue ?? null,
-          socialMedia: a.socialMedia ? JSON.stringify(a.socialMedia) : null,
-          tags: JSON.stringify(a.tags ?? []),
-          researchNotes: a.researchNotes ?? null,
-          status: a.status,
-          value: a.value,
-          createdAt: a.createdAt.toISOString(),
-          updatedAt: a.updatedAt.toISOString(),
-        })
-      }
-    })
-
-    tx(mockAccounts)
+    }
   }
 
-  return db
+  const userCount = await p.query('SELECT COUNT(1) as c FROM users')
+  if (Number(userCount.rows[0].c) === 0) {
+    const hash = bcrypt.hashSync('admin123', 10)
+    const now = new Date().toISOString()
+    await p.query(
+      'INSERT INTO users (id, email, name, "passwordHash", role, "createdAt") VALUES ($1, $2, $3, $4, $5, $6)',
+      ['1', 'admin@company.com', 'Admin', hash, 'admin', now]
+    )
+    await p.query(
+      'INSERT INTO users (id, email, name, "passwordHash", role, "createdAt") VALUES ($1, $2, $3, $4, $5, $6)',
+      ['2', 'editor@company.com', 'Editor', hash, 'editor', now]
+    )
+    await p.query(
+      'INSERT INTO users (id, email, name, "passwordHash", role, "createdAt") VALUES ($1, $2, $3, $4, $5, $6)',
+      ['3', 'viewer@company.com', 'Viewer', hash, 'viewer', now]
+    )
+  }
+
+  initialized = true
+}
+
+export type UserRole = 'admin' | 'editor' | 'viewer'
+
+export type UserRow = {
+  id: string
+  email: string
+  name: string
+  passwordHash: string
+  role: UserRole
+  createdAt: string
+}
+
+export const findUserByEmail = async (email: string): Promise<UserRow | undefined> => {
+  await ensureSchema()
+  const p = getPool()
+  const result = await p.query('SELECT id, email, name, "passwordHash", role, "createdAt" FROM users WHERE email = $1', [email])
+  return result.rows[0] as UserRow | undefined
+}
+
+export const findUserById = async (id: string): Promise<UserRow | undefined> => {
+  await ensureSchema()
+  const p = getPool()
+  const result = await p.query('SELECT id, email, name, "passwordHash", role, "createdAt" FROM users WHERE id = $1', [id])
+  return result.rows[0] as UserRow | undefined
+}
+
+export const verifyPassword = (plaintext: string, hash: string): boolean => {
+  return bcrypt.compareSync(plaintext, hash)
 }
 
 export const rowToAccount = (row: AccountRow): Account => {

@@ -1,18 +1,29 @@
 import { NextResponse } from 'next/server'
 
-import { getDb, rowToAccount } from '@/lib/db'
+import { getPool, ensureSchema, rowToAccount, AccountRow } from '@/lib/db'
 import { generateMockSignals } from '@/lib/signals'
+import { apiGuard } from '@/lib/apiGuard'
+import { requireRole } from '@/lib/rbac'
 
 export const runtime = 'nodejs'
 
 export async function POST(
-  _request: Request,
+  request: Request,
   { params }: { params: { id: string } }
 ) {
-  const db = getDb()
-  const row = db.prepare('SELECT * FROM accounts WHERE id = ?').get(params.id) as
-    | Parameters<typeof rowToAccount>[0]
-    | undefined
+  const blocked = apiGuard(request)
+  if (blocked) return blocked
+
+  const denied = await requireRole(request, 'editor')
+  if (denied) return denied
+
+  await ensureSchema()
+  const pool = getPool()
+  const result = await pool.query(
+    'SELECT * FROM accounts WHERE id = $1 AND "deletedAt" IS NULL',
+    [params.id]
+  )
+  const row = result.rows[0] as AccountRow | undefined
 
   if (!row) {
     return NextResponse.json({ error: 'Not found' }, { status: 404 })
@@ -22,25 +33,24 @@ export async function POST(
   const signals = generateMockSignals(account)
   const now = new Date()
 
-  db.prepare(
-    `
-      UPDATE accounts SET
-        signalsJson=@signalsJson,
-        signalsUpdatedAt=@signalsUpdatedAt,
-        updatedAt=@updatedAt
-      WHERE id=@id
-    `
-  ).run({
-    id: account.id,
-    signalsJson: JSON.stringify(
-      signals.map((s) => ({
-        ...s,
-        detectedAt: s.detectedAt.toISOString(),
-      }))
-    ),
-    signalsUpdatedAt: now.toISOString(),
-    updatedAt: now.toISOString(),
-  })
+  await pool.query(
+    `UPDATE accounts SET
+      "signalsJson"=$1,
+      "signalsUpdatedAt"=$2,
+      "updatedAt"=$3
+    WHERE id=$4`,
+    [
+      JSON.stringify(
+        signals.map((s) => ({
+          ...s,
+          detectedAt: s.detectedAt.toISOString(),
+        }))
+      ),
+      now.toISOString(),
+      now.toISOString(),
+      account.id,
+    ]
+  )
 
   return NextResponse.json({
     signals: signals.map((s) => ({
