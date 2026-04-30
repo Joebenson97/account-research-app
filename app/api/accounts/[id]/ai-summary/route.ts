@@ -3,6 +3,7 @@ import { NextResponse } from 'next/server'
 import { getPool, ensureSchema, rowToAccount, AccountRow } from '@/lib/db'
 import { generateAiSummary } from '@/lib/aiSummary'
 import { apiGuard } from '@/lib/apiGuard'
+import { requireRole } from '@/lib/rbac'
 
 export const runtime = 'nodejs'
 
@@ -12,6 +13,9 @@ export async function POST(
 ) {
   const blocked = apiGuard(request)
   if (blocked) return blocked
+
+  const denied = await requireRole(request, 'editor')
+  if (denied) return denied
 
   await ensureSchema()
   const pool = getPool()

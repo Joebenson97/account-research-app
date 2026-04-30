@@ -3,6 +3,7 @@ import { NextResponse } from 'next/server'
 import { getPool, ensureSchema, rowToAccount, AccountRow } from '@/lib/db'
 import { computeAccountScore } from '@/lib/accountScore'
 import { apiGuard } from '@/lib/apiGuard'
+import { requireRole } from '@/lib/rbac'
 import { updateAccountSchema, formatZodErrors } from '@/lib/validation'
 import { Account } from '@/types/account'
 
@@ -88,6 +89,9 @@ export async function PUT(
 ) {
   const blocked = apiGuard(request)
   if (blocked) return blocked
+
+  const denied = await requireRole(request, 'editor')
+  if (denied) return denied
 
   let rawBody: unknown
   try {
@@ -196,6 +200,9 @@ export async function DELETE(
 ) {
   const blocked = apiGuard(request)
   if (blocked) return blocked
+
+  const denied = await requireRole(request, 'admin')
+  if (denied) return denied
 
   await ensureSchema()
   const pool = getPool()

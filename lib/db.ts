@@ -79,9 +79,20 @@ export const ensureSchema = async (): Promise<void> => {
       email TEXT NOT NULL UNIQUE,
       name TEXT NOT NULL,
       "passwordHash" TEXT NOT NULL,
+      role TEXT NOT NULL DEFAULT 'viewer',
       "createdAt" TEXT NOT NULL
     );
   `)
+
+  // Auto-migrate: add role column if missing
+  const userCols = await p.query(
+    `SELECT column_name FROM information_schema.columns WHERE table_name = 'users'`
+  )
+  const userColNames = userCols.rows.map((r: { column_name: string }) => r.column_name)
+  if (!userColNames.includes('role')) {
+    await p.query(`ALTER TABLE users ADD COLUMN role TEXT NOT NULL DEFAULT 'viewer'`)
+    await p.query(`UPDATE users SET role = 'admin' WHERE email = 'admin@company.com'`)
+  }
 
   const countResult = await p.query('SELECT COUNT(1) as c FROM accounts')
   if (Number(countResult.rows[0].c) === 0) {
@@ -124,27 +135,46 @@ export const ensureSchema = async (): Promise<void> => {
   const userCount = await p.query('SELECT COUNT(1) as c FROM users')
   if (Number(userCount.rows[0].c) === 0) {
     const hash = bcrypt.hashSync('admin123', 10)
+    const now = new Date().toISOString()
     await p.query(
-      'INSERT INTO users (id, email, name, "passwordHash", "createdAt") VALUES ($1, $2, $3, $4, $5)',
-      ['1', 'admin@company.com', 'Admin', hash, new Date().toISOString()]
+      'INSERT INTO users (id, email, name, "passwordHash", role, "createdAt") VALUES ($1, $2, $3, $4, $5, $6)',
+      ['1', 'admin@company.com', 'Admin', hash, 'admin', now]
+    )
+    await p.query(
+      'INSERT INTO users (id, email, name, "passwordHash", role, "createdAt") VALUES ($1, $2, $3, $4, $5, $6)',
+      ['2', 'editor@company.com', 'Editor', hash, 'editor', now]
+    )
+    await p.query(
+      'INSERT INTO users (id, email, name, "passwordHash", role, "createdAt") VALUES ($1, $2, $3, $4, $5, $6)',
+      ['3', 'viewer@company.com', 'Viewer', hash, 'viewer', now]
     )
   }
 
   initialized = true
 }
 
+export type UserRole = 'admin' | 'editor' | 'viewer'
+
 export type UserRow = {
   id: string
   email: string
   name: string
   passwordHash: string
+  role: UserRole
   createdAt: string
 }
 
 export const findUserByEmail = async (email: string): Promise<UserRow | undefined> => {
   await ensureSchema()
   const p = getPool()
-  const result = await p.query('SELECT id, email, name, "passwordHash", "createdAt" FROM users WHERE email = $1', [email])
+  const result = await p.query('SELECT id, email, name, "passwordHash", role, "createdAt" FROM users WHERE email = $1', [email])
+  return result.rows[0] as UserRow | undefined
+}
+
+export const findUserById = async (id: string): Promise<UserRow | undefined> => {
+  await ensureSchema()
+  const p = getPool()
+  const result = await p.query('SELECT id, email, name, "passwordHash", role, "createdAt" FROM users WHERE id = $1', [id])
   return result.rows[0] as UserRow | undefined
 }
 

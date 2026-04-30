@@ -3,6 +3,7 @@ import { NextResponse } from 'next/server'
 import { getPool, ensureSchema, rowToAccount, AccountRow } from '@/lib/db'
 import { computeAccountScore } from '@/lib/accountScore'
 import { apiGuard } from '@/lib/apiGuard'
+import { requireRole } from '@/lib/rbac'
 import { createAccountSchema, formatZodErrors } from '@/lib/validation'
 import { Account } from '@/types/account'
 
@@ -61,16 +62,104 @@ export async function GET(request: Request) {
 
   await ensureSchema()
   const pool = getPool()
-  const result = await pool.query(
-    'SELECT * FROM accounts WHERE "deletedAt" IS NULL ORDER BY "createdAt" DESC'
+
+  const url = new URL(request.url)
+  const page = Math.max(1, parseInt(url.searchParams.get('page') ?? '1', 10) || 1)
+  const limit = Math.min(100, Math.max(1, parseInt(url.searchParams.get('limit') ?? '20', 10) || 20))
+  const search = url.searchParams.get('search')?.trim() || null
+  const status = url.searchParams.get('status') || null
+  const industry = url.searchParams.get('industry') || null
+  const value = url.searchParams.get('value') || null
+  const location = url.searchParams.get('location') || null
+
+  const conditions: string[] = ['"deletedAt" IS NULL']
+  const params: (string | number)[] = []
+  let paramIdx = 1
+
+  if (search) {
+    conditions.push(`(LOWER(name) LIKE $${paramIdx} OR LOWER(company) LIKE $${paramIdx} OR LOWER(email) LIKE $${paramIdx})`)
+    params.push(`%${search.toLowerCase()}%`)
+    paramIdx++
+  }
+  if (status) {
+    conditions.push(`status = $${paramIdx}`)
+    params.push(status)
+    paramIdx++
+  }
+  if (industry) {
+    conditions.push(`industry = $${paramIdx}`)
+    params.push(industry)
+    paramIdx++
+  }
+  if (value) {
+    conditions.push(`value = $${paramIdx}`)
+    params.push(value)
+    paramIdx++
+  }
+  if (location) {
+    conditions.push(`location = $${paramIdx}`)
+    params.push(location)
+    paramIdx++
+  }
+
+  const whereClause = conditions.join(' AND ')
+
+  const countResult = await pool.query(
+    `SELECT COUNT(1) as total FROM accounts WHERE ${whereClause}`,
+    params
   )
-  const accounts = (result.rows as AccountRow[]).map((r) => rowToAccount(r)).map(toResponse)
-  return NextResponse.json({ accounts })
+  const total = Number(countResult.rows[0].total)
+
+  const offset = (page - 1) * limit
+  const dataResult = await pool.query(
+    `SELECT * FROM accounts WHERE ${whereClause} ORDER BY "createdAt" DESC LIMIT $${paramIdx} OFFSET $${paramIdx + 1}`,
+    [...params, limit, offset]
+  )
+
+  const accounts = (dataResult.rows as AccountRow[]).map((r) => rowToAccount(r)).map(toResponse)
+
+  // Also return stats (computed from full unfiltered dataset for the dashboard cards)
+  const statsResult = await pool.query(
+    `SELECT
+      COUNT(1) as total,
+      COUNT(1) FILTER (WHERE status = 'active') as active,
+      COUNT(1) FILTER (WHERE status = 'prospect') as prospects,
+      COUNT(1) FILTER (WHERE value = 'high') as "highValue"
+    FROM accounts WHERE "deletedAt" IS NULL`
+  )
+  const stats = {
+    total: Number(statsResult.rows[0].total),
+    active: Number(statsResult.rows[0].active),
+    prospects: Number(statsResult.rows[0].prospects),
+    highValue: Number(statsResult.rows[0].highValue),
+  }
+
+  // Return distinct values for filter dropdowns
+  const filtersResult = await pool.query(
+    `SELECT
+      ARRAY_AGG(DISTINCT industry ORDER BY industry) FILTER (WHERE industry IS NOT NULL) as industries,
+      ARRAY_AGG(DISTINCT location ORDER BY location) FILTER (WHERE location IS NOT NULL) as locations
+    FROM accounts WHERE "deletedAt" IS NULL`
+  )
+  const filterOptions = {
+    industries: (filtersResult.rows[0].industries as string[] | null) ?? [],
+    locations: (filtersResult.rows[0].locations as string[] | null) ?? [],
+  }
+
+  return NextResponse.json({
+    accounts,
+    pagination: { page, limit, total, totalPages: Math.ceil(total / limit) },
+    stats,
+    filterOptions,
+  })
 }
 
 export async function POST(request: Request) {
   const blocked = apiGuard(request)
   if (blocked) return blocked
+
+  const denied = await requireRole(request, 'editor')
+  if (denied) return denied
 
   let rawBody: unknown
   try {

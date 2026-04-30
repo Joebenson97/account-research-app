@@ -16,9 +16,12 @@ export default function LoginPage() {
           <LoginForm />
         </Suspense>
 
-        <p className="mt-4 text-center text-xs text-gray-500">
-          Default credentials: admin@company.com / admin123
-        </p>
+        <div className="mt-4 text-center text-xs text-gray-500 space-y-1">
+          <p className="font-medium text-gray-600">Demo accounts (password: admin123)</p>
+          <p><strong>Admin</strong> — admin@company.com (full access)</p>
+          <p><strong>Editor</strong> — editor@company.com (create &amp; edit)</p>
+          <p><strong>Viewer</strong> — viewer@company.com (read-only)</p>
+        </div>
       </div>
     </div>
   )
